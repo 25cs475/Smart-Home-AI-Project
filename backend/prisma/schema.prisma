@@ -1,0 +1,193 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id           String           @id @default(uuid())
+  email        String           @unique
+  passwordHash String
+  name         String
+  role         String           @default("HOUSEHOLD_MEMBER") // ADMIN, HOME_OWNER, HOUSEHOLD_MEMBER
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  preferences  UserPreference[]
+}
+
+model Household {
+  id        String   @id @default(uuid())
+  name      String   @default("Smart Residence")
+  address   String   @default("101 Intelligent Way")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  rooms     Room[]
+}
+
+model Room {
+  id               String           @id @default(uuid())
+  householdId      String
+  household        Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  name             String
+  floor            Int              @default(1)
+  roomType         String           @default("LIVING_ROOM") // LIVING_ROOM, BEDROOM, STUDY_ROOM, KITCHEN
+  defaultTemp      Float            @default(24.0)
+  currentTemp      Float            @default(32.0)
+  currentHumidity  Float            @default(68.0)
+  currentOccupancy Int              @default(2)
+  weather          String           @default("Hot / Sunny") // Hot / Sunny, Cold / Snowy, Rainy, Cloudy, Mild
+  timeOfDay        String           @default("08:00 PM")
+  isNight          Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  devices          Device[]
+  preferences      UserPreference[]
+  decisions        AIDecision[]
+  conflicts        ConflictEvent[]
+  sensorReadings   SensorReading[]
+}
+
+model Device {
+  id               String          @id @default(uuid())
+  roomId           String
+  room             Room            @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  name             String
+  type             String          // AC, HEATER, THERMOSTAT, FAN, TEMP_SENSOR, HUMIDITY_SENSOR, OCCUPANCY_SENSOR
+  status           String          @default("ONLINE") // ONLINE, OFFLINE
+  state            String          @default("OFF") // COOLING, HEATING, ECO, COMFORT, OFF
+  currentReading   Float           @default(32.0)
+  targetTemp       Float           @default(26.0)
+  isManualOverride Boolean         @default(false)
+  lastUpdated      DateTime        @default(now())
+  actions          DeviceAction[]
+  sensorReadings   SensorReading[]
+}
+
+model SensorReading {
+  id         String   @id @default(uuid())
+  roomId     String
+  room       Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  deviceId   String?
+  device     Device?  @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  sensorType String   // TEMPERATURE, HUMIDITY, OCCUPANCY
+  value      Float
+  unit       String   // °C, %, people
+  timestamp  DateTime @default(now())
+}
+
+model UserPreference {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roomId            String?
+  room              Room?    @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  preferredTemp     Float    @default(24.0)
+  climatePreference String   @default("COOL") // COOL, WARM, NEUTRAL
+  priority          String   @default("NORMAL") // HIGH, NORMAL, LOW
+  priorityWeight    Float    @default(1.0)
+  activeStartHour   Int      @default(0)
+  activeEndHour     Int      @default(24)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+model KnowledgeFrame {
+  id            String      @id @default(uuid())
+  frameType     String      // HOME_FRAME, ROOM_FRAME, CLIMATE_SITUATION_FRAME
+  parentFrameId String?
+  name          String
+  description   String
+  slotsJson     String      // Serialized JSON of slot key-values and facets
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  slots         FrameSlot[]
+}
+
+model FrameSlot {
+  id           String         @id @default(uuid())
+  frameId      String
+  frame        KnowledgeFrame @relation(fields: [frameId], references: [id], onDelete: Cascade)
+  slotName     String
+  slotValue    String
+  valueType    String         @default("string") // string, number, boolean, json
+  defaultValue String?
+  isInherited  Boolean        @default(false)
+  sourceFrame  String?
+}
+
+model DecisionRule {
+  id             String   @id @default(uuid())
+  ruleCode       String   @unique
+  name           String
+  description    String
+  conditionLogic String
+  actionLogic    String
+  priority       Int      @default(1)
+  isActive       Boolean  @default(true)
+}
+
+model AIDecision {
+  id                         String          @id @default(uuid())
+  roomId                     String
+  room                       Room            @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  timestamp                  DateTime        @default(now())
+  contextSnapshot            String          // JSON: { temp, humidity, occupancy, weather, time, preferences }
+  frameSnapshot              String          // JSON: Full situation frame representation
+  rulesFired                 String          // JSON: array of rule codes and rationale
+  decisionMode               String          // COOLING, HEATING, ECO, COMFORT
+  targetTemp                 Float
+  acAction                   String          // ON, OFF, UNCHANGED
+  heaterAction               String          // ON, OFF, UNCHANGED
+  fanAction                  String          // HIGH, MEDIUM, LOW, OFF
+  confidenceScore            Float           @default(94.0)
+  explanation                String          // Dynamic Explainable AI text
+  hadConflict                Boolean         @default(false)
+  conflictResolutionStrategy String?
+  conflictEvents             ConflictEvent[]
+  deviceActions              DeviceAction[]
+}
+
+model ConflictEvent {
+  id                  String      @id @default(uuid())
+  decisionId          String?
+  decision            AIDecision? @relation(fields: [decisionId], references: [id], onDelete: SetNull)
+  roomId              String
+  room                Room        @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  timestamp           DateTime    @default(now())
+  usersInvolved       String      // JSON array of user names / IDs
+  preferencesSnapshot String      // JSON array of { user, temp, priority }
+  strategyUsed        String      // AVERAGE, PRIORITY, MAJORITY, ROOM_BASED, MANUAL
+  resolvedTargetTemp  Float
+}
+
+model DeviceAction {
+  id            String      @id @default(uuid())
+  decisionId    String?
+  decision      AIDecision? @relation(fields: [decisionId], references: [id], onDelete: SetNull)
+  deviceId      String
+  device        Device      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  previousState String
+  newState      String
+  triggeredBy   String      @default("AI_DECISION") // AI_DECISION, MANUAL_OVERRIDE, SIMULATION_RESET
+  timestamp     DateTime    @default(now())
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  title     String
+  message   String
+  type      String   @default("INFO") // ALERT, INFO, WARNING, SUCCESS
+  isRead    Boolean  @default(false)
+  timestamp DateTime @default(now())
+}
+
+model SystemSetting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String
+  description String
+  updatedAt   DateTime @updatedAt
+}
